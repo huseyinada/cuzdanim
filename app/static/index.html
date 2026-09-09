@@ -17,8 +17,21 @@
   <div id="toast" role="status" aria-live="polite"></div>
   <div id="version-banner" class="version-banner hidden" role="alert"></div>
 
+  <!-- ================= BOOT ================= -->
+  <!-- Shown by default (before any JS runs), so a refresh never flashes the -->
+  <!-- login screen for an already-signed-in user — bootstrap() decides which -->
+  <!-- of #view-auth / #view-app to reveal once it knows the real auth state. -->
+  <section id="view-boot" class="screen boot-screen">
+    <div class="boot-box">
+      <img src="/static/icons/icon-192.png" alt="">
+      <div class="spinner" aria-hidden="true"></div>
+      <p id="boot-msg" class="muted small">Yükleniyor…</p>
+      <button type="button" id="boot-retry" class="ghost hidden">Tekrar dene</button>
+    </div>
+  </section>
+
   <!-- ================= AUTH ================= -->
-  <section id="view-auth" class="screen">
+  <section id="view-auth" class="screen hidden">
     <div class="auth-box">
       <div class="logo">
         <img src="/static/icons/icon-192.png" alt="">

@@ -3,7 +3,7 @@
   'use strict';
 
   const API = '/api/v1';
-  const APP_VERSION = '1.1.0'; // must match settings.APP_VERSION on the server
+  const APP_VERSION = '1.2.0'; // must match settings.APP_VERSION on the server
   const TOKEN_KEY = 'cuzdanim_access';
   const REFRESH_KEY = 'cuzdanim_refresh';
   const TABS = ['today', 'plan', 'recurring', 'tx', 'analytics', 'settings'];
@@ -55,6 +55,21 @@
   const fmtDayShort = (iso) => { const d = new Date(iso); return `${WEEKDAYS_TR[(d.getDay() + 6) % 7]} ${pad(d.getDate())}.${pad(d.getMonth() + 1)}`; };
   const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  // Disables the submit button for the duration of the (async) handler so a
+  // slow network + an impatient double-tap can never fire the same form twice
+  // (duplicate transactions, duplicate rules, ...).
+  function guardSubmit(form, handler) {
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const btn = form.querySelector('button[type="submit"]');
+      if (btn?.disabled) return;
+      const original = btn?.textContent;
+      if (btn) { btn.disabled = true; btn.textContent = '…'; }
+      try { await handler(e); }
+      finally { if (btn) { btn.disabled = false; btn.textContent = original; } }
+    };
+  }
 
   let toastTimer;
   function toast(msg, isError = false) {
@@ -108,7 +123,9 @@
         detail = 'Sunucu eski sürümde çalışıyor. basla.bat penceresini kapatıp yeniden aç.';
         showVersionBanner('eski');
       }
-      throw new Error(detail);
+      const httpErr = new Error(detail);
+      httpErr.status = res.status;
+      throw httpErr;
     }
     return data;
   }
@@ -150,11 +167,13 @@
   // Screens & tabs
   // ------------------------------------------------------------------------
   function showAuth() {
+    $('#view-boot').classList.add('hidden');
     $('#view-app').classList.add('hidden');
     $('#view-auth').classList.remove('hidden');
   }
 
   async function showApp() {
+    $('#view-boot').classList.add('hidden');
     $('#view-auth').classList.add('hidden');
     $('#view-app').classList.remove('hidden');
     const now = new Date();
@@ -189,17 +208,15 @@
     $('#form-signup').classList.remove('hidden'); $('#form-login').classList.add('hidden');
   };
 
-  $('#form-login').onsubmit = async (e) => {
-    e.preventDefault();
+  guardSubmit($('#form-login'), async (e) => {
     const f = new FormData(e.target);
     try {
       tokens.set(await api('/auth/login', { method: 'POST', auth: false, form: { username: f.get('email'), password: f.get('password') } }));
       await bootstrap();
     } catch (err) { toast(err.message, true); }
-  };
+  });
 
-  $('#form-signup').onsubmit = async (e) => {
-    e.preventDefault();
+  guardSubmit($('#form-signup'), async (e) => {
     const f = new FormData(e.target);
     try {
       await api('/auth/signup', { method: 'POST', auth: false, body: { email: f.get('email'), password: f.get('password'), full_name: f.get('full_name') || null } });
@@ -207,7 +224,7 @@
       toast('Hoş geldin! 🎉');
       await bootstrap();
     } catch (err) { toast(err.message, true); }
-  };
+  });
 
   $('#btn-logout').onclick = () => { tokens.clear(); state.user = null; showAuth(); toast('Çıkış yapıldı.'); };
   $('#btn-settings').onclick = () => switchTab('settings');
@@ -218,8 +235,27 @@
     try {
       state.user = await api('/auth/me');
       await showApp();
-    } catch (_) { showAuth(); }
+    } catch (err) {
+      // A real "you're not logged in" (401, tokens rejected/expired past refresh)
+      // goes to the login form. Anything else — offline, DNS hiccup, a cold-start
+      // 5xx — is transient: keep the tokens and let the user retry, instead of
+      // bouncing a genuinely signed-in user out to the login screen.
+      if (err.status === 401 || !tokens.access) { showAuth(); return; }
+      $('#boot-msg').textContent = 'Bağlantı kurulamadı. İnternetini kontrol edip tekrar dene.';
+      $('#boot-retry').classList.remove('hidden');
+    }
   }
+  $('#boot-retry').onclick = () => {
+    $('#boot-retry').classList.add('hidden');
+    $('#boot-msg').textContent = 'Yükleniyor…';
+    bootstrap();
+  };
+  // Retry automatically the moment connectivity comes back, so the user
+  // doesn't have to notice and tap the button themselves.
+  window.addEventListener('online', () => {
+    if ($('#view-boot').classList.contains('hidden')) return;
+    bootstrap();
+  });
 
   // ------------------------------------------------------------------------
   // Shared form helpers
@@ -255,8 +291,7 @@
   fillPaymentSelect(quickForm.payment_method, 'cash');
   wireTypeSegment(quickForm);
 
-  quickForm.onsubmit = async (e) => {
-    e.preventDefault();
+  guardSubmit(quickForm, async (e) => {
     const f = new FormData(quickForm);
     const body = {
       type: f.get('type'), category: f.get('category'), amount: f.get('amount'),
@@ -269,7 +304,7 @@
       quickForm.amount.value = ''; quickForm.description.value = ''; quickForm.transaction_date.value = '';
       await loadToday();
     } catch (err) { toast(err.message, true); }
-  };
+  });
 
   $('#btn-add-money').onclick = () => {
     setTypeSegment(quickForm, 'income');
@@ -371,8 +406,7 @@
   }
   $$('#ptype-segment button').forEach((b) => { b.onclick = () => setPeriodTypeUI(b.dataset.ptype); });
 
-  planForm.onsubmit = async (e) => {
-    e.preventDefault();
+  guardSubmit(planForm, async (e) => {
     const f = new FormData(planForm);
     try {
       await api('/planning', {
@@ -387,12 +421,11 @@
       toast('Plan kaydedildi ✅');
       await loadPlan();
     } catch (err) { toast(err.message, true); }
-  };
+  });
 
   const budgetForm = $('#form-budget');
   fillCategorySelect(budgetForm.category, 'expense');
-  budgetForm.onsubmit = async (e) => {
-    e.preventDefault();
+  guardSubmit(budgetForm, async (e) => {
     const f = new FormData(budgetForm);
     try {
       await api('/budgets', { method: 'POST', body: { category: f.get('category'), monthly_limit: f.get('monthly_limit'), period: isoDate(new Date()) } });
@@ -400,7 +433,7 @@
       budgetForm.monthly_limit.value = '';
       await loadBudgets();
     } catch (err) { toast(err.message, true); }
-  };
+  });
 
   async function loadBudgets() {
     try {
@@ -495,8 +528,7 @@
     return `Her ayın ${r.day_of_month}. günü ${t}`;
   }
 
-  ruleForm.onsubmit = async (e) => {
-    e.preventDefault();
+  guardSubmit(ruleForm, async (e) => {
     const f = new FormData(ruleForm);
     const body = {
       name: f.get('name'), type: f.get('type'), category: f.get('category'), amount: f.get('amount'),
@@ -511,7 +543,7 @@
       ruleForm.name.value = ''; ruleForm.amount.value = '';
       await loadRecurring();
     } catch (err) { toast(err.message, true); }
-  };
+  });
 
   async function loadRecurring() {
     try {
