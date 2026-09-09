@@ -10,3 +10,6 @@ vapid_keys.json
 backups/
 build/
 dist/
+
+.vercel
+.env*

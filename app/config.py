@@ -7,6 +7,7 @@ once at process start, and exposed as a cached singleton via `get_settings()`.
 """
 from functools import lru_cache
 from typing import List
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,16 +37,25 @@ class Settings(BaseSettings):
     @field_validator("DATABASE_URL", mode="after")
     @classmethod
     def _normalize_database_url(cls, value: str) -> str:
-        """Neon/Vercel hand out a plain `postgres://...sslmode=require` string;
-        SQLAlchemy's async engine needs the `+asyncpg` driver and asyncpg
-        speaks `ssl=require`, not the psycopg-style `sslmode=` param."""
+        """Neon/Vercel hand out a plain `postgres://...?sslmode=require&channel_binding=require`
+        connection string. SQLAlchemy's async engine needs the `+asyncpg` driver, and
+        asyncpg's own connect() rejects any query param it doesn't recognise — it wants
+        `ssl=require` (not the psycopg-style `sslmode=`) and knows nothing about
+        `channel_binding` (a libpq/SCRAM option asyncpg doesn't implement), so that one
+        must be dropped rather than renamed."""
         if value.startswith("sqlite"):
             return value
         if value.startswith("postgres://"):
             value = "postgresql+asyncpg://" + value[len("postgres://"):]
-        elif value.startswith("postgresql://"):
+        elif value.startswith("postgresql://") and "+asyncpg" not in value.split("://", 1)[0]:
             value = "postgresql+asyncpg://" + value[len("postgresql://"):]
-        return value.replace("sslmode=require", "ssl=require").replace("sslmode=verify-full", "ssl=require")
+
+        scheme, netloc, path, query, fragment = urlsplit(value)
+        params = dict(parse_qsl(query, keep_blank_values=True))
+        params.pop("channel_binding", None)
+        if params.pop("sslmode", None) in ("require", "verify-full", "verify-ca", "prefer"):
+            params["ssl"] = "require"
+        return urlunsplit((scheme, netloc, path, urlencode(params), fragment))
 
     # --- Security / Auth -------------------------------------------------
     SECRET_KEY: str = Field(
