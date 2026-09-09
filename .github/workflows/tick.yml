@@ -1,0 +1,21 @@
+name: Cüzdanım — otomatik düşüm tetikleyici
+
+# Vercel'in ücretsiz planı kendi cron işlerini günde bir defadan sık çalıştıramıyor,
+# bu yüzden dakikalık "vadesi gelen tekrarlayan işlemleri düş" görevini burada,
+# GitHub Actions'ın izin verdiği en sık aralıkla (5 dakika) tetikliyoruz. Sunucu
+# tarafındaki iş zaten kayıt-bazlı idempotent (aynı slotu iki kez düşmez), o yüzden
+# tam dakikasında olmaması veya arada bir kaçırılan tetikleme veri bozmaz.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: /api/cron/tick uc noktasini tetikle
+        run: |
+          curl -fsS --max-time 20 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://cuzdanim-swart.vercel.app/api/cron/tick"
