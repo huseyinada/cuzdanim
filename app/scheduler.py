@@ -72,14 +72,20 @@ async def send_daily_motivation() -> None:
         try:
             users = await UserRepository(db).list_active()
             service = MotivationService(db)
+            push = PushService(db)
             sub_repo = PushSubscriptionRepository(db)
             for user in users:
                 message = await service.get_or_create(user, today)
-                if message.pushed_at is not None or not await sub_repo.list_for_user(user.id):
+                if not await sub_repo.list_for_user(user.id):
                     skipped += 1
                     continue
-                result = await service.push_today(user, today)
-                pushed += result.sent
+                if message.pushed_at is None:
+                    result = await service.push_today(user, today)
+                    pushed += result.sent
+                # Resurface the "Kasa" notification every morning too, in case
+                # it was swiped away — a web notification can't be made truly
+                # undismissable, so this is the daily "it comes back" guarantee.
+                await push.send_wallet_update(user.id, reason="Günaydın! Bugünün bakiyesi")
             await db.commit()
         except Exception:
             await db.rollback()
@@ -260,6 +266,9 @@ async def post_due_recurring() -> None:
             title = "Otomatik düşüldü 💸" if expenses else "Para geldi 💰"
             body = " · ".join(lines) + f"\nKalan bakiye: {fmt_money(balance, symbol)}"
             await push.send_to_user(user_id, title=title, body=body, url="/#today", tag="recurring")
+            # Also refresh the always-current "Kasa" notification (same tag every
+            # time -> updates in place) so it never shows a stale balance.
+            await push.send_wallet_update(user_id, reason=" · ".join(lines))
         await db.commit()
 
     logger.info("post_due_recurring: posted %s transaction(s) for %s user(s)", len(posted), len(by_user))

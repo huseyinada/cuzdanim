@@ -8,6 +8,7 @@ User-facing error messages are in Turkish (the app's UI language).
 """
 import asyncio
 import calendar
+import logging
 import sqlite3
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
@@ -36,7 +37,7 @@ from app.models import (
     TransactionType,
     User,
 )
-from app.motivation_texts import WEEKDAYS_TR, compose_daily_message, status_line
+from app.motivation_texts import WEEKDAYS_TR, compose_daily_message, fmt_money, status_line
 from app.periods import (
     days_in_period,
     period_bounds,
@@ -92,6 +93,8 @@ from app.security import (
     verify_password,
 )
 from app.timeutils import local_now_naive, local_today, to_local_naive
+
+logger = logging.getLogger("app.services")
 
 TWOPLACES = Decimal("0.01")
 
@@ -170,13 +173,23 @@ class TransactionService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.transactions = TransactionRepository(db)
+        self.push = PushService(db)
+
+    async def _notify_wallet(self, user_id: str) -> None:
+        """Best-effort — a push hiccup must never fail the actual transaction."""
+        try:
+            await self.push.send_wallet_update(user_id)
+        except Exception:
+            logger.exception("wallet push notification failed for user %s", user_id)
 
     async def create(self, user_id: str, data: TransactionCreate) -> Transaction:
         payload = data.model_dump()
         payload["transaction_date"] = (
             to_local_naive(payload["transaction_date"]) if payload.get("transaction_date") else local_now_naive()
         )
-        return await self.transactions.create(user_id=user_id, data=payload)
+        transaction = await self.transactions.create(user_id=user_id, data=payload)
+        await self._notify_wallet(user_id)
+        return transaction
 
     async def get_or_404(self, user_id: str, transaction_id: str) -> Transaction:
         transaction = await self.transactions.get_by_id(transaction_id, user_id)
@@ -203,11 +216,14 @@ class TransactionService:
             updates["transaction_date"] = to_local_naive(updates["transaction_date"])
         if not updates:
             return transaction
-        return await self.transactions.update(transaction, updates)
+        updated = await self.transactions.update(transaction, updates)
+        await self._notify_wallet(user_id)
+        return updated
 
     async def delete(self, user_id: str, transaction_id: str) -> None:
         transaction = await self.get_or_404(user_id, transaction_id)
         await self.transactions.delete(transaction)
+        await self._notify_wallet(user_id)
 
     async def list_paginated(
         self,
@@ -443,6 +459,7 @@ class RecurringService:
         self.db = db
         self.rules = RecurringRuleRepository(db)
         self.transactions = TransactionRepository(db)
+        self.push = PushService(db)
 
     # ---- calendar math -------------------------------------------------------
     @staticmethod
@@ -546,6 +563,10 @@ class RecurringService:
         tx = await self._post(rule, now)
         rule.last_posted_at = now
         await self.db.flush()
+        try:
+            await self.push.send_wallet_update(user_id, reason=f"{rule.name} şimdi düşüldü")
+        except Exception:
+            logger.exception("wallet push notification failed for user %s", user_id)
         return tx
 
     async def _post(self, rule: RecurringRule, slot: datetime) -> Transaction:
@@ -887,19 +908,37 @@ class PushService:
         return list(await self.subs.list_for_user(user_id))
 
     async def send_to_user(
-        self, user_id: str, *, title: str, body: str, url: str = "/", tag: Optional[str] = None
+        self,
+        user_id: str,
+        *,
+        title: str,
+        body: str,
+        url: str = "/",
+        tag: Optional[str] = None,
+        actions: Optional[list[dict]] = None,
+        renotify: bool = True,
     ) -> PushTestResult:
         """Fan a notification out to every device of one user. Stale
-        subscriptions (push service says 404/410) are pruned as we go."""
+        subscriptions (push service says 404/410) are pruned as we go.
+
+        `tag` + `renotify=False` makes an update *replace* the previous
+        notification of the same tag in place — no new sound/vibration if it's
+        still on screen, but it reappears normally if the user had dismissed
+        it. That's how `send_wallet_update` below keeps a single "Kasa"
+        notification quietly in sync instead of stacking up a new one per event.
+        """
         subs = await self.subs.list_for_user(user_id)
         payload = {
             "title": title,
             "body": body,
             "url": url,
             "tag": tag or "finance",
+            "renotify": renotify,
             "icon": "/static/icons/icon-192.png",
             "badge": "/static/icons/icon-192.png",
         }
+        if actions:
+            payload["actions"] = actions
         sent = failed = removed = 0
         for sub in subs:
             ok, stale, _ = await asyncio.to_thread(
@@ -913,6 +952,38 @@ class PushService:
                     await self.subs.delete(sub)
                     removed += 1
         return PushTestResult(sent=sent, failed=failed, removed_stale=removed)
+
+    WALLET_TAG = "wallet-balance"
+
+    async def send_wallet_update(self, user_id: str, *, reason: Optional[str] = None) -> PushTestResult:
+        """The always-current "Kasa" notification: current balance, a
+        + Gelir / − Gider quick-action pair, same tag every time so it updates
+        in place instead of piling up. Call this after anything that changes
+        the balance (manual add/edit/delete, an auto-post, "şimdi düş").
+
+        A web notification can never be made truly undismissable — that's an
+        Android *native app* capability (foreground service), not something a
+        website/PWA can request — so this is the closest real equivalent:
+        it re-appears the moment anything changes, and again every morning
+        (see `send_daily_motivation` in scheduler.py) even if it was swiped away.
+        """
+        balance = await TransactionRepository(self.db).balance_total(user_id)
+        symbol = settings.CURRENCY_SYMBOL
+        body = f"Güncel bakiye: {fmt_money(balance, symbol)}"
+        if reason:
+            body += f"\n{reason}"
+        return await self.send_to_user(
+            user_id,
+            title="💰 Kasa",
+            body=body,
+            url="/#today",
+            tag=self.WALLET_TAG,
+            renotify=False,
+            actions=[
+                {"action": "quick-income", "title": "+ Gelir"},
+                {"action": "quick-expense", "title": "− Gider"},
+            ],
+        )
 
 
 # ============================================================================

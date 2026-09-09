@@ -3,7 +3,7 @@
   'use strict';
 
   const API = '/api/v1';
-  const APP_VERSION = '1.2.0'; // must match settings.APP_VERSION on the server
+  const APP_VERSION = '1.3.0'; // must match settings.APP_VERSION on the server
   const TOKEN_KEY = 'cuzdanim_access';
   const REFRESH_KEY = 'cuzdanim_refresh';
   const TABS = ['today', 'plan', 'recurring', 'tx', 'analytics', 'settings'];
@@ -235,6 +235,7 @@
     try {
       state.user = await api('/auth/me');
       await showApp();
+      consumeQuickAddParam();
     } catch (err) {
       // A real "you're not logged in" (401, tokens rejected/expired past refresh)
       // goes to the login form. Anything else — offline, DNS hiccup, a cold-start
@@ -306,12 +307,25 @@
     } catch (err) { toast(err.message, true); }
   });
 
-  $('#btn-add-money').onclick = () => {
-    setTypeSegment(quickForm, 'income');
-    quickForm.category.value = 'salary';
+  // Shared by the "+ Para ekle" button and the "Kasa" push notification's
+  // + Gelir / − Gider quick-action buttons (see consumeQuickAddParam below).
+  function openQuickAdd(type) {
+    if ((location.hash || '#today').slice(1) !== 'today') switchTab('today');
+    setTypeSegment(quickForm, type);
+    if (type === 'income') quickForm.category.value = 'salary';
     $('#quick-add-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
     quickForm.amount.focus();
-  };
+  }
+  $('#btn-add-money').onclick = () => openQuickAdd('income');
+
+  // A tap on the "Kasa" notification's action buttons lands here as
+  // /?quick=income#today or /?quick=expense#today (see sw.js notificationclick).
+  function consumeQuickAddParam() {
+    const type = new URLSearchParams(location.search).get('quick');
+    if (type !== 'income' && type !== 'expense') return;
+    history.replaceState(null, '', location.pathname + (location.hash || '#today'));
+    openQuickAdd(type);
+  }
 
   function renderPlanSummary(plan) {
     state.plan = plan;

@@ -1,6 +1,6 @@
 /* Service worker: offline app shell + Web Push notifications.
  * Bump CACHE_VERSION whenever static assets change so old caches are purged. */
-const CACHE_VERSION = 'cuzdanim-v3';
+const CACHE_VERSION = 'cuzdanim-v4';
 const APP_SHELL = [
   '/',
   '/static/styles.css',
@@ -67,7 +67,8 @@ self.addEventListener('push', (event) => {
       icon: data.icon || '/static/icons/icon-192.png',
       badge: data.badge || '/static/icons/icon-192.png',
       tag: data.tag || 'cuzdanim',
-      renotify: true,
+      renotify: data.renotify !== false,
+      actions: data.actions || [], // e.g. the "Kasa" notification's + Gelir / − Gider buttons
       data: { url: data.url || '/' },
       lang: 'tr',
     })
@@ -76,7 +77,12 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const target = new URL(event.notification.data?.url || '/', self.location.origin).href;
+  // The two "Kasa" notification actions jump straight into the quick-add
+  // form, pre-set to income/expense, instead of just opening the app.
+  let targetPath = event.notification.data?.url || '/';
+  if (event.action === 'quick-income') targetPath = '/?quick=income#today';
+  else if (event.action === 'quick-expense') targetPath = '/?quick=expense#today';
+  const target = new URL(targetPath, self.location.origin).href;
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       const existing = clients.find((c) => c.url.startsWith(self.location.origin));

@@ -16,7 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     # --- General -------------------------------------------------------
     APP_NAME: str = "Cüzdanım"
-    APP_VERSION: str = "1.2.0"  # keep in sync with APP_VERSION in app/static/app.js
+    APP_VERSION: str = "1.3.0"  # keep in sync with APP_VERSION in app/static/app.js
     ENVIRONMENT: str = Field(default="development", pattern="^(development|staging|production)$")
     API_V1_PREFIX: str = "/api/v1"
     DEBUG: bool = False
