@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Cüzdanım</title>
+  <meta name="theme-color" content="#16a34a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <div id="version-banner" class="version-banner hidden" role="alert"></div>
+
+  <!-- ================= AUTH ================= -->
+  <section id="view-auth" class="screen">
+    <div class="auth-box">
+      <div class="logo">
+        <img src="/static/icons/icon-192.png" alt="">
+        <h1>Cüzdanım</h1>
+        <p class="muted">Günlük plan, sabit giderler, bütçe ve her sabah bir motivasyon.</p>
+      </div>
+      <div class="card">
+        <div class="segment" style="margin-bottom:14px">
+          <button type="button" id="auth-tab-login" class="active">Giriş Yap</button>
+          <button type="button" id="auth-tab-signup">Kayıt Ol</button>
+        </div>
+        <form id="form-login">
+          <div class="field"><label>E-posta</label><input name="email" type="email" required autocomplete="username" placeholder="ornek@mail.com"></div>
+          <div class="field"><label>Şifre</label><input name="password" type="password" required autocomplete="current-password" placeholder="••••••••"></div>
+          <button class="primary block" type="submit">Giriş Yap</button>
+        </form>
+        <form id="form-signup" class="hidden">
+          <div class="field"><label>Ad Soyad</label><input name="full_name" type="text" autocomplete="name" placeholder="Adın"></div>
+          <div class="field"><label>E-posta</label><input name="email" type="email" required autocomplete="username" placeholder="ornek@mail.com"></div>
+          <div class="field"><label>Şifre <span class="muted small">(en az 8 karakter, harf + rakam)</span></label><input name="password" type="password" required minlength="8" autocomplete="new-password"></div>
+          <button class="primary block" type="submit">Hesap Oluştur</button>
+        </form>
+      </div>
+      <p class="muted small" style="text-align:center">API dokümantasyonu: <a href="/docs">/docs</a></p>
+    </div>
+  </section>
+
+  <!-- ================= APP ================= -->
+  <section id="view-app" class="screen hidden">
+    <header class="appbar">
+      <div class="brand"><img src="/static/icons/icon-192.png" alt=""> Cüzdanım</div>
+      <div class="row">
+        <div class="muted small" id="today-label"></div>
+        <button type="button" class="icon-btn" id="btn-settings" aria-label="Ayarlar">⚙️</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- BUGÜN -->
+      <div id="tab-today" class="tab">
+        <div id="motivation-card" class="card accent">
+          <div class="muted small">Günün mesajı</div>
+          <h2 id="mot-title">Günaydın! ☀️</h2>
+          <p id="mot-body" class="small">Yükleniyor…</p>
+          <div id="mot-quote" class="quote small"></div>
+        </div>
+
+        <div class="card">
+          <div class="row between">
+            <h3>Kasa</h3>
+            <button class="ghost" type="button" id="btn-add-money">+ Para ekle</button>
+          </div>
+          <div class="wallet-balance" id="wallet-balance">—</div>
+          <div class="muted small" id="wallet-period-label">Toplam bakiye</div>
+          <div class="grid-3" style="margin-top:10px">
+            <div class="stat"><div class="label">Dönem kalan</div><div class="value" id="wallet-period-remaining">—</div></div>
+            <div class="stat"><div class="label">Sabitlere ayrılan</div><div class="value" id="wallet-reserved">—</div></div>
+            <div class="stat"><div class="label">Serbest</div><div class="value" id="wallet-free">—</div></div>
+          </div>
+          <div id="today-deductions-wrap" style="margin-top:12px">
+            <h3>Bugün düşülecekler</h3>
+            <div id="today-deductions" class="list"></div>
+          </div>
+        </div>
+
+        <div id="today-card" class="card">
+          <div class="row between">
+            <h3>Bugün serbestçe harcayabilirsin</h3>
+            <span id="plan-status-badge" class="badge ok">Yolunda</span>
+          </div>
+          <div class="big" id="remaining-today">—</div>
+          <div class="muted small" id="today-sub">Bugünkü limit — · harcanan —</div>
+          <div class="progress neutral" style="margin:10px 0"><span id="today-progress" style="width:0%"></span></div>
+          <p class="small" id="plan-status-msg"></p>
+          <div class="grid-3">
+            <div class="stat"><div class="label">Kalan bütçe</div><div class="value" id="remaining-total">—</div></div>
+            <div class="stat"><div class="label">Kalan gün</div><div class="value" id="days-remaining">—</div></div>
+            <div class="stat"><div class="label">Günlük taban</div><div class="value" id="base-daily">—</div></div>
+          </div>
+        </div>
+
+        <div class="card" id="quick-add-card">
+          <h3>Hızlı ekle</h3>
+          <form id="form-quick-add">
+            <div class="segment" style="margin-bottom:12px">
+              <button type="button" data-type="expense" class="active expense">Gider</button>
+              <button type="button" data-type="income">Gelir</button>
+            </div>
+            <input type="hidden" name="type" value="expense">
+            <div class="grid-2">
+              <div class="field"><label>Tutar (₺)</label><input name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" required placeholder="0,00"></div>
+              <div class="field"><label>Kategori</label><select name="category" required></select></div>
+            </div>
+            <div class="grid-2">
+              <div class="field"><label>Ödeme yöntemi</label><select name="payment_method"></select></div>
+              <div class="field"><label>Tarih</label><input name="transaction_date" type="datetime-local"></div>
+            </div>
+            <div class="field"><label>Açıklama</label><input name="description" type="text" maxlength="1000" placeholder="İsteğe bağlı"></div>
+            <button class="primary block" type="submit">Kaydet</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="row between"><h3>Son işlemler</h3><button class="ghost" type="button" data-goto="tx">Tümü →</button></div>
+          <div id="recent-list" class="list"></div>
+        </div>
+      </div>
+
+      <!-- PLAN -->
+      <div id="tab-plan" class="tab hidden">
+        <div class="card">
+          <h3>Plan ayarları</h3>
+          <form id="form-plan">
+            <div class="field">
+              <label>Para alma dönemin</label>
+              <div class="segment" id="ptype-segment">
+                <button type="button" data-ptype="monthly" class="active">Aylık (maaş)</button>
+                <button type="button" data-ptype="weekly">Haftalık</button>
+              </div>
+              <input type="hidden" name="period_type" value="monthly">
+            </div>
+            <div class="field">
+              <label><span id="income-label">Aylık gelir / maaş (₺)</span> <span class="muted small">— boş bırakırsan bu dönem girdiğin gelirler kullanılır</span></label>
+              <input name="income_override" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Örn. 30000">
+            </div>
+            <div class="field">
+              <label><span id="savings-label">Bu dönem kenara koymak istediğin birikim (₺)</span></label>
+              <input name="savings_goal" type="number" inputmode="decimal" step="0.01" min="0" value="0">
+            </div>
+            <button class="primary block" type="submit">Planı Kaydet</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="row between"><h3>Dönem özeti</h3><span class="muted small" id="plan-period-label"></span></div>
+          <div class="grid-2">
+            <div class="stat"><div class="label">Gelir</div><div class="value" id="p-income">—</div></div>
+            <div class="stat"><div class="label">Birikim hedefi</div><div class="value" id="p-savings">—</div></div>
+            <div class="stat"><div class="label">Harcanabilir</div><div class="value" id="p-spendable">—</div></div>
+            <div class="stat"><div class="label">Sabitlere ayrılan</div><div class="value" id="p-reserved">—</div></div>
+            <div class="stat"><div class="label">Bugüne kadar harcanan</div><div class="value" id="p-spent">—</div></div>
+            <div class="stat"><div class="label">Serbest kalan</div><div class="value" id="p-free">—</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Günlük çizelge — planlanan vs harcanan</h3>
+          <div class="chart-box"><canvas id="chart-plan"></canvas></div>
+        </div>
+
+        <div class="card">
+          <h3>Gün gün plan</h3>
+          <div class="table-wrap">
+            <table id="schedule-table">
+              <thead><tr><th>Gün</th><th>Plan</th><th>Sabit</th><th>Harcanan</th><th>Fark</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Kategori bütçeleri</h3>
+          <div id="budget-list" class="list" style="margin-bottom:12px"></div>
+          <form id="form-budget" class="grid-2">
+            <div class="field"><label>Kategori</label><select name="category" required></select></div>
+            <div class="field"><label>Aylık limit (₺)</label><input name="monthly_limit" type="number" inputmode="decimal" step="0.01" min="0.01" required></div>
+            <button class="primary block" type="submit" style="grid-column:1/-1">Bütçe Ekle</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- SABİT / TEKRARLAYAN -->
+      <div id="tab-recurring" class="tab hidden">
+        <div class="card">
+          <h3>Sabit giderlerim</h3>
+          <p class="muted small">Gün ve saatini seçtiğin harcamalar zamanı gelince <strong>otomatik düşülür</strong>; bakiye ve günlük limit anında güncellenir.</p>
+          <div id="rule-list" class="list"></div>
+        </div>
+
+        <div class="card">
+          <h3>Yeni sabit işlem</h3>
+          <form id="form-rule">
+            <div class="segment" style="margin-bottom:12px">
+              <button type="button" data-type="expense" class="active expense">Gider</button>
+              <button type="button" data-type="income">Gelir</button>
+            </div>
+            <input type="hidden" name="type" value="expense">
+            <div class="grid-2">
+              <div class="field"><label>Ad</label><input name="name" type="text" required maxlength="120" placeholder="Öğle yemeği"></div>
+              <div class="field"><label>Tutar (₺)</label><input name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" required placeholder="150"></div>
+            </div>
+            <div class="grid-2">
+              <div class="field"><label>Kategori</label><select name="category" required></select></div>
+              <div class="field"><label>Ödeme</label><select name="payment_method"></select></div>
+            </div>
+            <div class="grid-2">
+              <div class="field">
+                <label>Tekrar</label>
+                <select name="frequency">
+                  <option value="daily">Her gün</option>
+                  <option value="weekly">Haftanın seçili günleri</option>
+                  <option value="monthly">Ayda bir</option>
+                </select>
+              </div>
+              <div class="field"><label>Saat</label><input name="time_of_day" type="time" required value="12:30"></div>
+            </div>
+            <div class="field" id="weekday-field" hidden>
+              <label>Günler</label>
+              <div class="chips" id="weekday-chips">
+                <label><input type="checkbox" name="weekdays" value="0" checked>Pzt</label>
+                <label><input type="checkbox" name="weekdays" value="1" checked>Sal</label>
+                <label><input type="checkbox" name="weekdays" value="2" checked>Çar</label>
+                <label><input type="checkbox" name="weekdays" value="3" checked>Per</label>
+                <label><input type="checkbox" name="weekdays" value="4" checked>Cum</label>
+                <label><input type="checkbox" name="weekdays" value="5">Cmt</label>
+                <label><input type="checkbox" name="weekdays" value="6">Paz</label>
+              </div>
+            </div>
+            <div class="field" id="dom-field" hidden>
+              <label>Ayın günü</label>
+              <input name="day_of_month" type="number" min="1" max="31" value="1">
+            </div>
+            <div class="grid-2">
+              <div class="field"><label>Başlangıç</label><input name="start_date" type="date" required></div>
+              <div class="field"><label>Bitiş <span class="muted small">(isteğe bağlı)</span></label><input name="end_date" type="date"></div>
+            </div>
+            <div class="field">
+              <label class="switch"><input type="checkbox" name="auto_post" checked> Zamanı gelince otomatik düş</label>
+            </div>
+            <button class="primary block" type="submit">Sabit İşlemi Kaydet</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Önümüzdeki 7 gün</h3>
+          <div id="upcoming-list" class="list"></div>
+        </div>
+      </div>
+
+      <!-- İŞLEMLER -->
+      <div id="tab-tx" class="tab hidden">
+        <div class="card">
+          <div class="segment" id="tx-filter">
+            <button type="button" data-filter="" class="active">Hepsi</button>
+            <button type="button" data-filter="expense">Gider</button>
+            <button type="button" data-filter="income">Gelir</button>
+          </div>
+        </div>
+        <div class="card">
+          <div id="tx-list" class="list"></div>
+          <button id="tx-more" class="block" type="button" style="margin-top:12px">Daha fazla yükle</button>
+        </div>
+      </div>
+
+      <!-- ANALİZ -->
+      <div id="tab-analytics" class="tab hidden">
+        <div class="card">
+          <div class="month-nav">
+            <button type="button" id="an-prev">‹</button>
+            <strong id="an-month">—</strong>
+            <button type="button" id="an-next">›</button>
+          </div>
+          <div class="grid-2">
+            <div class="stat"><div class="label">Gelir</div><div class="value amount income" id="an-income">—</div></div>
+            <div class="stat"><div class="label">Gider</div><div class="value amount expense" id="an-expense">—</div></div>
+            <div class="stat"><div class="label">Net</div><div class="value" id="an-net">—</div></div>
+            <div class="stat"><div class="label">Tasarruf oranı</div><div class="value" id="an-rate">—</div></div>
+          </div>
+          <p class="muted small" id="an-compare" style="margin-top:10px"></p>
+        </div>
+        <div class="card">
+          <h3>Gider dağılımı</h3>
+          <div class="chart-box"><canvas id="chart-cat"></canvas></div>
+          <div id="cat-list" class="list" style="margin-top:12px"></div>
+        </div>
+        <div class="card">
+          <h3>Son 6 ay — gelir vs gider</h3>
+          <div class="chart-box"><canvas id="chart-trend"></canvas></div>
+        </div>
+      </div>
+
+      <!-- AYARLAR -->
+      <div id="tab-settings" class="tab hidden">
+        <div class="card">
+          <h3>Hesap</h3>
+          <div id="me-name" style="font-weight:700"></div>
+          <div id="me-email" class="muted small"></div>
+        </div>
+
+        <div class="card">
+          <h3>Bildirimler</h3>
+          <p class="small">Her sabah <strong>08:00</strong>'de günün motivasyon mesajı ve günlük limitin telefonuna bildirim olarak gelir. Sabit giderlerin otomatik düşüldüğünde ve bütçe eşiğini geçtiğinde de uyarı alırsın.</p>
+          <div id="notif-status" class="small" style="margin:8px 0"></div>
+          <div id="notif-insecure" class="card warn small hidden" style="margin:8px 0">
+            Bu sayfa güvenli bağlantı (HTTPS) üzerinden açılmadı; tarayıcı bu yüzden bildirim ve "ana ekrana ekle" özelliklerini kapatır.
+            PC'de <code>http://localhost:8000</code> kullan; telefonda kurulum için <strong>KURULUM_REHBERI.md</strong> dosyasındaki adımları izle.
+          </div>
+          <div class="row" style="flex-wrap:wrap">
+            <button id="btn-notif-enable" class="primary" type="button">Bildirimleri Aç</button>
+            <button id="btn-notif-test" type="button">Test Bildirimi</button>
+            <button id="btn-notif-today" type="button">Bugünün Mesajını Gönder</button>
+          </div>
+        </div>
+
+        <div class="card" id="install-card">
+          <h3>Uygulama olarak kur</h3>
+          <p class="small">Telefonunda: Chrome menüsü (⋮) → <strong>Ana ekrana ekle</strong> / <strong>Uygulamayı yükle</strong>. Ana ekrandaki ikon ile tam ekran açılır.</p>
+          <button id="btn-install" class="primary hidden" type="button">Uygulamayı Yükle</button>
+        </div>
+
+        <div class="card">
+          <h3>Veri güvenliği</h3>
+          <p class="small">Veritabanı her gece 03:30'da otomatik yedeklenir (son 14 yedek saklanır). İstediğin an elle de yedek alabilirsin.</p>
+          <div class="row" style="flex-wrap:wrap">
+            <button id="btn-backup" type="button">Şimdi Yedek Al</button>
+            <span class="muted small" id="backup-info"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Bütçe uyarıları</h3>
+          <div id="alert-list" class="list"></div>
+        </div>
+
+        <div class="card">
+          <button id="btn-logout" class="danger block" type="button">Çıkış Yap</button>
+          <p class="muted small" style="text-align:center;margin-top:10px">API: <a href="/docs">/docs</a> · Sağlık: <a href="/health">/health</a></p>
+        </div>
+      </div>
+    </main>
+
+    <nav class="tabbar">
+      <button type="button" data-tab="today" class="active"><span class="ico">🏠</span>Bugün</button>
+      <button type="button" data-tab="plan"><span class="ico">📅</span>Plan</button>
+      <button type="button" data-tab="recurring"><span class="ico">🔁</span>Sabit</button>
+      <button type="button" data-tab="tx"><span class="ico">🧾</span>İşlemler</button>
+      <button type="button" data-tab="analytics"><span class="ico">📊</span>Analiz</button>
+    </nav>
+  </section>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

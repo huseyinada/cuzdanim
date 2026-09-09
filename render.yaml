@@ -1,0 +1,27 @@
+# Render.com blueprint — ücretsiz HTTPS adres.
+# Ücretsiz planda kalıcı disk olmadığı için veritabanı olarak ücretsiz bir
+# harici PostgreSQL (Neon / Supabase) kullanılır; adımlar KURULUM_REHBERI.md'de.
+services:
+  - type: web
+    name: cuzdanim
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: SCHEDULER_TIMEZONE
+        value: Europe/Istanbul
+      - key: SECRET_KEY
+        generateValue: true
+      # Neon bağlantı adresi: postgresql+asyncpg://USER:PASS@HOST/DB?ssl=require
+      - key: DATABASE_URL
+        sync: false
+      # `python -m app.tools.vapid` çıktısındaki iki anahtar:
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_CLAIMS_EMAIL
+        value: mailto:you@example.com

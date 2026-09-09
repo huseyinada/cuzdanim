@@ -1,0 +1,37 @@
+# --- Web framework -----------------------------------------------------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# --- Database / ORM / Migrations ---------------------------------------
+sqlalchemy==2.0.36
+alembic==1.14.0
+asyncpg==0.30.0          # PostgreSQL async driver (production)
+aiosqlite==0.20.0        # SQLite async driver (local demo)
+greenlet==3.1.1          # required by SQLAlchemy's async bridge
+
+# --- Validation / Settings ----------------------------------------------
+pydantic==2.10.4
+pydantic-settings==2.7.0
+email-validator==2.2.0
+
+# --- Auth / Security -----------------------------------------------------
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1             # pinned: passlib 1.7.4's version probe breaks on bcrypt>=4.1 (cosmetic warning only)
+python-multipart==0.0.20   # required by OAuth2PasswordRequestForm
+
+# --- Background jobs -----------------------------------------------------
+apscheduler==3.10.4
+tzdata==2024.2           # IANA timezone database for zoneinfo on Windows
+
+# --- Web Push notifications ------------------------------------------------
+pywebpush==2.0.0
+py-vapid==1.9.1
+
+# --- Misc ------------------------------------------------------------------
+python-dotenv==1.0.1
+
+# --- Dev / Test (optional: pip install -r requirements.txt -r requirements-dev.txt)
+# pytest==8.3.4
+# pytest-asyncio==0.25.0
+# httpx==0.28.1
