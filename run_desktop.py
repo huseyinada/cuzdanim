@@ -35,6 +35,35 @@ def _lan_ip() -> str:
         return "PC-IP-ADRESI"
 
 
+def _remote_url(data_dir: Path) -> str | None:
+    """Read the optional `sunucu.txt` next to the exe.
+
+    If it contains a real http(s) URL, the launcher stops running its own
+    local server + database and instead just opens that URL — i.e. it turns
+    into a shortcut to the always-on cloud server (Render). Delete the file,
+    or blank it out, to go back to local mode. No rebuild needed either way.
+    """
+    f = data_dir / "sunucu.txt"
+    if not f.exists():
+        f.write_text(
+            "\n".join(
+                [
+                    "# Bu dosyaya bulut sunucunun adresini yazarsan (ör. https://cuzdanim.onrender.com),",
+                    "# Cüzdanım.exe kendi yerel sunucusunu başlatmak yerine doğrudan o adrese bağlanır.",
+                    "# Boş/# ile başlayan satırlar yok sayılır. Yerel moda dönmek için bu dosyayı boşalt.",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return None
+    for line in f.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and line.startswith(("http://", "https://")):
+            return line.rstrip("/")
+    return None
+
+
 def _ensure_env(data_dir: Path) -> None:
     env = data_dir / ".env"
     if env.exists():
@@ -65,7 +94,24 @@ def main() -> None:
 
     data_dir = _data_dir()
     os.chdir(data_dir)  # all relative paths (db, backups, .env, vapid keys) live next to the exe
-    _ensure_env(data_dir)
+
+    remote = _remote_url(data_dir)
+    if remote:
+        print("=" * 50)
+        print("  Cüzdanım — bulut sunucusuna bağlanılıyor")
+        print("=" * 50)
+        print(f"  Sunucu:  {remote}")
+        print("  Bu pencere sadece bir kısayoldur, veriler bu bilgisayarda tutulmaz;")
+        print("  hepsi bulut sunucusunda ve her cihazda aynı görünür.")
+        print(f"  Yerel moda dönmek için: {data_dir / 'sunucu.txt'} dosyasını boşalt.")
+        print("-" * 50)
+        webbrowser.open(remote)
+        if os.environ.get("CUZDANIM_NO_BROWSER") != "1":
+            try:
+                input("Kapatmak için Enter'a bas...")
+            except (EOFError, KeyboardInterrupt):
+                pass
+        return
 
     import uvicorn
 

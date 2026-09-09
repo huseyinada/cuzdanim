@@ -3,6 +3,7 @@ Application entry point — FastAPI app factory, middleware, routers, static
 PWA frontend, and the APScheduler lifecycle wired into FastAPI's `lifespan`.
 """
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
@@ -20,6 +21,7 @@ from app.routers import (
     analytics,
     auth,
     budgets,
+    cron,
     motivation,
     planning,
     push,
@@ -38,21 +40,33 @@ logger = logging.getLogger("app")
 
 STATIC_DIR = BUNDLE_DIR / "app" / "static"
 
+# Vercel sets this on every invocation (local `vercel dev` included). A serverless
+# function is not a long-running process, so APScheduler never starts there —
+# the same job functions run instead via the secured `/api/cron/*` endpoints
+# (see app/routers/cron.py), triggered by Vercel Cron + an external minute pinger.
+IS_SERVERLESS = os.environ.get("VERCEL") == "1"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: migrate schema to head (any dialect), load VAPID keys, start scheduler.
-    Shutdown: scheduler + DB pool, cleanly."""
-    logger.info("Starting %s v%s (%s)", settings.APP_NAME, settings.APP_VERSION, settings.ENVIRONMENT)
+    """Startup: migrate schema to head (any dialect), load VAPID keys, start scheduler
+    (skipped on Vercel — see IS_SERVERLESS). Shutdown: scheduler + DB pool, cleanly."""
+    logger.info(
+        "Starting %s v%s (%s)%s",
+        settings.APP_NAME, settings.APP_VERSION, settings.ENVIRONMENT,
+        " [serverless]" if IS_SERVERLESS else "",
+    )
 
     await run_migrations()  # Alembic upgrade head — idempotent, handles legacy DBs
     get_vapid_keys()        # create/load push keys once, up front, so the first subscribe never races
-    start_scheduler()
+    if not IS_SERVERLESS:
+        start_scheduler()
 
     yield
 
     logger.info("Shutting down %s", settings.APP_NAME)
-    shutdown_scheduler()
+    if not IS_SERVERLESS:
+        shutdown_scheduler()
     await dispose_engine()
 
 
@@ -117,6 +131,9 @@ def create_app() -> FastAPI:
         system.router,
     ):
         app.include_router(router, prefix=api_prefix)
+
+    # Cron endpoints define their own full path (/api/cron/...) — see app/routers/cron.py.
+    app.include_router(cron.router)
 
     # --- Operational endpoints -------------------------------------------------
     @app.get("/health", tags=["System"])

@@ -1,0 +1,16 @@
+.venv/
+build/
+dist/
+backups/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+vapid_keys.json
+__pycache__/
+*.pyc
+.pytest_cache/
+version_info.txt
+*.spec
+*.ico

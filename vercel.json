@@ -1,0 +1,19 @@
+{
+  "builds": [
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": ["app/static/**", "alembic/**", "alembic.ini"]
+      }
+    }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "api/index.py" }
+  ],
+  "crons": [
+    { "path": "/api/cron/motivation", "schedule": "0 5 * * *" },
+    { "path": "/api/cron/budget-check", "schedule": "0 17 * * *" },
+    { "path": "/api/cron/monthly-snapshot", "schedule": "30 21 * * *" }
+  ]
+}

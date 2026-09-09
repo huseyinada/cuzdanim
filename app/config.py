@@ -8,7 +8,7 @@ once at process start, and exposed as a cached singleton via `get_settings()`.
 from functools import lru_cache
 from typing import List
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,11 +22,30 @@ class Settings(BaseSettings):
 
     # --- Database --------------------------------------------------------
     # Async driver required: `sqlite+aiosqlite://` for local demo,
-    # `postgresql+asyncpg://` for production.
-    DATABASE_URL: str = "sqlite+aiosqlite:///./finance_tracker.db"
+    # `postgresql+asyncpg://` for production. On Vercel, the Neon storage
+    # integration injects `DATABASE_URL` (and legacy `POSTGRES_URL`) itself —
+    # either name is picked up automatically, no manual copy-paste needed.
+    DATABASE_URL: str = Field(
+        default="sqlite+aiosqlite:///./finance_tracker.db",
+        validation_alias=AliasChoices("DATABASE_URL", "POSTGRES_URL", "POSTGRES_PRISMA_URL"),
+    )
     DATABASE_ECHO: bool = False
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
+
+    @field_validator("DATABASE_URL", mode="after")
+    @classmethod
+    def _normalize_database_url(cls, value: str) -> str:
+        """Neon/Vercel hand out a plain `postgres://...sslmode=require` string;
+        SQLAlchemy's async engine needs the `+asyncpg` driver and asyncpg
+        speaks `ssl=require`, not the psycopg-style `sslmode=` param."""
+        if value.startswith("sqlite"):
+            return value
+        if value.startswith("postgres://"):
+            value = "postgresql+asyncpg://" + value[len("postgres://"):]
+        elif value.startswith("postgresql://"):
+            value = "postgresql+asyncpg://" + value[len("postgresql://"):]
+        return value.replace("sslmode=require", "ssl=require").replace("sslmode=verify-full", "ssl=require")
 
     # --- Security / Auth -------------------------------------------------
     SECRET_KEY: str = Field(
