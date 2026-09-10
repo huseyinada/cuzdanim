@@ -120,6 +120,7 @@ class TransactionRepository:
         category: Optional[Category] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        q: Optional[str] = None,
     ) -> Select:
         query = select(Transaction).where(Transaction.user_id == user_id)
         if type_ is not None:
@@ -130,6 +131,8 @@ class TransactionRepository:
             query = query.where(Transaction.transaction_date >= start_date)
         if end_date is not None:
             query = query.where(Transaction.transaction_date < end_date)
+        if q:
+            query = query.where(Transaction.description.ilike(f"%{q}%"))
         return query
 
     async def list_paginated(
@@ -140,11 +143,12 @@ class TransactionRepository:
         category: Optional[Category] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        q: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[Sequence[Transaction], int]:
         base = self._filtered_query(
-            user_id, type_=type_, category=category, start_date=start_date, end_date=end_date
+            user_id, type_=type_, category=category, start_date=start_date, end_date=end_date, q=q
         )
 
         count_result = await self.db.execute(select(func.count()).select_from(base.subquery()))
@@ -156,6 +160,24 @@ class TransactionRepository:
             .limit(page_size)
         )
         return result.scalars().all(), total
+
+    async def list_for_export(
+        self,
+        user_id: str,
+        *,
+        type_: Optional[TransactionType] = None,
+        category: Optional[Category] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        q: Optional[str] = None,
+        limit: int = 20000,
+    ) -> Sequence[Transaction]:
+        """Every matching row, oldest first — for CSV export (no pagination)."""
+        base = self._filtered_query(
+            user_id, type_=type_, category=category, start_date=start_date, end_date=end_date, q=q
+        )
+        result = await self.db.execute(base.order_by(Transaction.transaction_date.asc()).limit(limit))
+        return result.scalars().all()
 
     async def sum_amount(
         self,

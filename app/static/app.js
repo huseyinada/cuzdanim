@@ -6,7 +6,33 @@
   const APP_VERSION = '1.3.0'; // must match settings.APP_VERSION on the server
   const TOKEN_KEY = 'cuzdanim_access';
   const REFRESH_KEY = 'cuzdanim_refresh';
+  const THEME_KEY = 'cuzdanim_theme';
   const TABS = ['today', 'plan', 'recurring', 'tx', 'analytics', 'settings'];
+
+  // ------------------------------------------------------------------------
+  // Theme (Açık / Koyu / Sistem) — the <head> inline script already applied
+  // any saved choice before first paint; this wires up switching it live.
+  // ------------------------------------------------------------------------
+  function systemPrefersDark() { return window.matchMedia?.('(prefers-color-scheme: dark)').matches; }
+  function currentThemeChoice() {
+    const saved = localStorage.getItem(THEME_KEY);
+    return saved === 'light' || saved === 'dark' ? saved : 'system';
+  }
+  function applyTheme(choice) {
+    if (choice === 'system') { document.documentElement.removeAttribute('data-theme'); localStorage.removeItem(THEME_KEY); }
+    else { document.documentElement.setAttribute('data-theme', choice); localStorage.setItem(THEME_KEY, choice); }
+    const isDark = choice === 'dark' || (choice === 'system' && systemPrefersDark());
+    const toggleBtn = $('#btn-theme-toggle');
+    if (toggleBtn) toggleBtn.textContent = isDark ? '☀️' : '🌙';
+    $$('#theme-segment button').forEach((b) => b.classList.toggle('active', b.dataset.themeChoice === choice));
+  }
+  $('#btn-theme-toggle').onclick = () => {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
+      || (!document.documentElement.hasAttribute('data-theme') && systemPrefersDark());
+    applyTheme(isDark ? 'light' : 'dark');
+  };
+  $$('#theme-segment button').forEach((b) => { b.onclick = () => applyTheme(b.dataset.themeChoice); });
+  applyTheme(currentThemeChoice());
 
   // ------------------------------------------------------------------------
   // i18n maps
@@ -79,6 +105,28 @@
     el.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+    try { navigator.vibrate?.(isError ? [12, 60, 12] : 10); } catch (_) { /* unsupported (iOS, desktop) */ }
+  }
+
+  // Animates a money value counting up/down to its new figure — used for the
+  // wallet balance so a change feels alive instead of just replacing text.
+  function animateMoney(el, to) {
+    const from = Number(el.dataset.raw || 0);
+    const target = Number(to || 0);
+    el.dataset.raw = target;
+    if (Math.abs(target - from) < 0.005 || !window.matchMedia?.('(prefers-reduced-motion: no-preference)').matches) {
+      el.textContent = money(target);
+      return;
+    }
+    const start = performance.now();
+    const duration = 500;
+    (function step(now) {
+      const p = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = money(from + (target - from) * eased);
+      if (p < 1) requestAnimationFrame(step);
+      else { el.textContent = money(target); el.classList.remove('pulse'); void el.offsetWidth; el.classList.add('pulse'); }
+    })(start);
   }
 
   // ------------------------------------------------------------------------
@@ -158,6 +206,7 @@
     charts: {},
     txPage: 1,
     txFilter: '',
+    txQuery: '',
     txTotalPages: 1,
     analyticsMonth: new Date(),
     installPrompt: null,
@@ -348,7 +397,7 @@
 
   function renderWallet(w) {
     const bal = $('#wallet-balance');
-    bal.textContent = money(w.balance_total);
+    animateMoney(bal, w.balance_total);
     bal.classList.toggle('negative', Number(w.balance_total) < 0);
     $('#wallet-period-label').textContent = `Toplam bakiye · ${w.period_type === 'weekly' ? 'Bu hafta' : 'Bu ay'}: ${w.period_label}`;
     $('#wallet-period-remaining').textContent = money(w.period_remaining);
@@ -618,11 +667,42 @@
   });
   $('#tx-more').onclick = () => loadTransactions(false);
 
+  let txSearchTimer;
+  $('#tx-search').oninput = (e) => {
+    clearTimeout(txSearchTimer);
+    txSearchTimer = setTimeout(() => { state.txQuery = e.target.value.trim(); loadTransactions(true); }, 300);
+  };
+
+  function txQueryParams() {
+    const q = new URLSearchParams();
+    if (state.txFilter) q.set('type', state.txFilter);
+    if (state.txQuery) q.set('q', state.txQuery);
+    return q;
+  }
+
+  $('#tx-export').onclick = async () => {
+    try {
+      const res = await fetch(`${API}/transactions/export.csv?${txQueryParams()}`, {
+        headers: { Authorization: `Bearer ${tokens.access}` },
+      });
+      if (!res.ok) throw new Error('CSV indirilemedi.');
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'cuzdanim_islemler.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      toast('CSV indirildi ✅');
+    } catch (err) { toast(err.message, true); }
+  };
+
   async function loadTransactions(reset) {
     if (reset) { state.txPage = 1; $('#tx-list').innerHTML = ''; }
     try {
-      const q = new URLSearchParams({ page: state.txPage, page_size: 20 });
-      if (state.txFilter) q.set('type', state.txFilter);
+      const q = txQueryParams();
+      q.set('page', state.txPage); q.set('page_size', 20);
       const data = await api(`/transactions?${q}`);
       state.txTotalPages = data.total_pages;
       const html = data.items.map((t) => txItem(t, { deletable: true })).join('');

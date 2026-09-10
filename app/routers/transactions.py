@@ -3,7 +3,7 @@ import math
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Response, status
 
 from app.dependencies import CurrentUser, DbSession
 from app.models import Category, TransactionType
@@ -30,16 +30,18 @@ async def list_transactions(
     category: Optional[Category] = Query(default=None, description="Filter by category."),
     start_date: Optional[datetime] = Query(default=None, description="Inclusive lower bound."),
     end_date: Optional[datetime] = Query(default=None, description="Exclusive upper bound."),
+    q: Optional[str] = Query(default=None, max_length=200, description="Search in description (contains, case-insensitive)."),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
 ) -> TransactionListResponse:
-    """List the current user's transactions with optional filters and pagination."""
+    """List the current user's transactions with optional filters, search and pagination."""
     items, total = await TransactionService(db).list_paginated(
         current_user.id,
         type_=type,
         category=category,
         start_date=start_date,
         end_date=end_date,
+        q=q,
         page=page,
         page_size=page_size,
     )
@@ -49,6 +51,27 @@ async def list_transactions(
         page=page,
         page_size=page_size,
         total_pages=max(1, math.ceil(total / page_size)),
+    )
+
+
+@router.get("/export.csv", response_class=Response, include_in_schema=True)
+async def export_transactions_csv(
+    current_user: CurrentUser,
+    db: DbSession,
+    type: Optional[TransactionType] = Query(default=None),
+    category: Optional[Category] = Query(default=None),
+    start_date: Optional[datetime] = Query(default=None),
+    end_date: Optional[datetime] = Query(default=None),
+    q: Optional[str] = Query(default=None, max_length=200),
+) -> Response:
+    """Every matching transaction as a downloadable CSV (Excel-friendly, ';' separated)."""
+    csv_text = await TransactionService(db).export_csv(
+        current_user.id, type_=type, category=category, start_date=start_date, end_date=end_date, q=q
+    )
+    return Response(
+        content="﻿" + csv_text,  # UTF-8 BOM so Excel renders Turkish characters correctly
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=cuzdanim_islemler.csv"},
     )
 
 

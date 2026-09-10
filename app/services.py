@@ -37,7 +37,7 @@ from app.models import (
     TransactionType,
     User,
 )
-from app.motivation_texts import WEEKDAYS_TR, compose_daily_message, fmt_money, status_line
+from app.motivation_texts import WEEKDAYS_TR, category_label, compose_daily_message, fmt_money, status_line
 from app.periods import (
     days_in_period,
     period_bounds,
@@ -97,6 +97,11 @@ from app.timeutils import local_now_naive, local_today, to_local_naive
 logger = logging.getLogger("app.services")
 
 TWOPLACES = Decimal("0.01")
+
+_PAYMENT_TR = {
+    "cash": "Nakit", "credit_card": "Kredi Kartı", "debit_card": "Banka Kartı",
+    "bank_transfer": "Havale / EFT", "mobile_payment": "Mobil Ödeme", "other": "Diğer",
+}
 
 
 def _q(value: Decimal) -> Decimal:
@@ -233,6 +238,7 @@ class TransactionService:
         category: Optional[Category],
         start_date: Optional[datetime],
         end_date: Optional[datetime],
+        q: Optional[str] = None,
         page: int,
         page_size: int,
     ) -> tuple[list[Transaction], int]:
@@ -242,9 +248,47 @@ class TransactionService:
             category=category,
             start_date=to_local_naive(start_date) if start_date else None,
             end_date=to_local_naive(end_date) if end_date else None,
+            q=(q or None),
             page=page,
             page_size=page_size,
         )
+
+    async def export_csv(
+        self,
+        user_id: str,
+        *,
+        type_: Optional[TransactionType] = None,
+        category: Optional[Category] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        q: Optional[str] = None,
+    ) -> str:
+        """All matching transactions as CSV text (Excel-friendly, UTF-8 BOM added by the router)."""
+        import csv
+        import io
+
+        rows = await self.transactions.list_for_export(
+            user_id,
+            type_=type_,
+            category=category,
+            start_date=to_local_naive(start_date) if start_date else None,
+            end_date=to_local_naive(end_date) if end_date else None,
+            q=(q or None),
+        )
+        buf = io.StringIO()
+        writer = csv.writer(buf, delimiter=";")  # ';' opens cleanly in Turkish-locale Excel
+        writer.writerow(["Tarih", "Tür", "Kategori", "Tutar", "Açıklama", "Ödeme Yöntemi", "Kaynak"])
+        for t in rows:
+            writer.writerow([
+                t.transaction_date.strftime("%d.%m.%Y %H:%M"),
+                "Gelir" if t.type == TransactionType.INCOME else "Gider",
+                category_label(t.category.value),
+                f"{t.amount:.2f}".replace(".", ","),
+                t.description or "",
+                _PAYMENT_TR.get(t.payment_method.value, t.payment_method.value),
+                "Otomatik" if t.source == TransactionSource.RECURRING else "Manuel",
+            ])
+        return buf.getvalue()
 
 
 # ============================================================================
