@@ -32,6 +32,7 @@ from app.models import (
     PushSubscription,
     RecurringRule,
     SpendingPlan,
+    Task,
     Transaction,
     TransactionSource,
     TransactionType,
@@ -54,6 +55,7 @@ from app.repositories import (
     RecurringRuleRepository,
     SnapshotRepository,
     SpendingPlanRepository,
+    TaskRepository,
     TransactionRepository,
     UserRepository,
     month_bounds,
@@ -75,6 +77,8 @@ from app.schemas import (
     RecurringRuleCreate,
     RecurringRuleUpdate,
     SpendingPlanUpsert,
+    TaskCreate,
+    TaskUpdate,
     Token,
     TransactionCreate,
     TransactionUpdate,
@@ -842,6 +846,77 @@ class PlanningService:
             schedule=schedule,
             chart=chart,
         )
+
+
+# ============================================================================
+class TaskService:
+    """Görevler (to-do list) — a general life-organizer that lives next to the
+    wallet because the user already has the app + push notifications set up,
+    not because it has anything to do with money."""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.tasks = TaskRepository(db)
+        self.push = PushService(db)
+
+    async def list_for_user(self, user_id: str, *, include_done: bool) -> list[Task]:
+        return list(await self.tasks.list_for_user(user_id, include_done=include_done))
+
+    async def get_or_404(self, user_id: str, task_id: str) -> Task:
+        task = await self.tasks.get_by_id(task_id, user_id)
+        if task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Görev bulunamadı.")
+        return task
+
+    async def create(self, user_id: str, data: TaskCreate) -> Task:
+        payload = data.model_dump()
+        if payload.get("due_at"):
+            payload["due_at"] = to_local_naive(payload["due_at"])
+        return await self.tasks.create(user_id=user_id, data=payload)
+
+    async def update(self, user_id: str, task_id: str, data: TaskUpdate) -> Task:
+        task = await self.get_or_404(user_id, task_id)
+        updates = data.model_dump(exclude_unset=True)
+        if updates.get("due_at"):
+            updates["due_at"] = to_local_naive(updates["due_at"])
+        if "remind" in updates and updates["remind"] and not (updates.get("due_at") or task.due_at):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Hatırlatma için bir tarih/saat seçmelisin."
+            )
+        if updates.get("due_at"):
+            # A new due date means any past reminder no longer applies.
+            updates["reminded_at"] = None
+        if updates.get("is_done"):
+            updates["done_at"] = local_now_naive()
+        elif updates.get("is_done") is False:
+            updates["done_at"] = None
+        if not updates:
+            return task
+        return await self.tasks.update(task, updates)
+
+    async def delete(self, user_id: str, task_id: str) -> None:
+        task = await self.get_or_404(user_id, task_id)
+        await self.tasks.delete(task)
+
+    async def send_due_reminders(self, now: Optional[datetime] = None) -> int:
+        """Push a reminder for every due, unreminded task (idempotent via
+        `reminded_at`) — called by the local scheduler loop and the
+        `/api/cron/task-reminders` endpoint (Vercel + the GitHub Actions pinger)."""
+        due = await self.tasks.list_due_reminders(now or local_now_naive())
+        sent = 0
+        for task in due:
+            result = await self.push.send_to_user(
+                task.user_id,
+                title="⏰ Hatırlatma",
+                body=task.title + (f"\n{task.notes}" if task.notes else ""),
+                url="/#tasks",
+                tag=f"task-{task.id}",
+            )
+            task.reminded_at = local_now_naive()
+            sent += result.sent
+        if due:
+            await self.db.flush()
+        return sent
 
 
 # ============================================================================

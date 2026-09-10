@@ -7,7 +7,7 @@
   const TOKEN_KEY = 'cuzdanim_access';
   const REFRESH_KEY = 'cuzdanim_refresh';
   const THEME_KEY = 'cuzdanim_theme';
-  const TABS = ['today', 'plan', 'recurring', 'tx', 'analytics', 'settings'];
+  const TABS = ['today', 'plan', 'recurring', 'tx', 'tasks', 'analytics', 'settings'];
 
   // ------------------------------------------------------------------------
   // Theme (Açık / Koyu / Sistem) — the <head> inline script already applied
@@ -81,6 +81,31 @@
   const fmtDayShort = (iso) => { const d = new Date(iso); return `${WEEKDAYS_TR[(d.getDay() + 6) % 7]} ${pad(d.getDate())}.${pad(d.getMonth() + 1)}`; };
   const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  // "50+30" -> 80.00 in any tutar (amount) field, so you don't need a separate
+  // calculator to add up a receipt before typing the total in.
+  function evalSimpleMath(raw) {
+    const expr = raw.replace(/,/g, '.').trim();
+    if (!/^\d+(\.\d+)?([+\-*/]\d+(\.\d+)?)+$/.test(expr)) return null;
+    const tokens = expr.match(/\d+(\.\d+)?|[+\-*/]/g);
+    const pass1 = [tokens[0]];
+    for (let i = 1; i < tokens.length; i += 2) {
+      const op = tokens[i], num = tokens[i + 1];
+      if (op === '*' || op === '/') pass1.push(String(op === '*' ? parseFloat(pass1.pop()) * parseFloat(num) : parseFloat(pass1.pop()) / parseFloat(num)));
+      else pass1.push(op, num);
+    }
+    let result = parseFloat(pass1[0]);
+    for (let i = 1; i < pass1.length; i += 2) result = pass1[i] === '+' ? result + parseFloat(pass1[i + 1]) : result - parseFloat(pass1[i + 1]);
+    return Number.isFinite(result) ? result : null;
+  }
+  function wireSmartAmount(input) {
+    input.addEventListener('blur', () => {
+      const raw = input.value.trim();
+      if (!raw || !/[+\-*/]/.test(raw)) return;
+      const result = evalSimpleMath(raw);
+      if (result !== null && result > 0) { input.value = result.toFixed(2); toast(`= ${money(result)}`); }
+    });
+  }
 
   // Disables the submit button for the duration of the (async) handler so a
   // slow network + an impatient double-tap can never fire the same form twice
@@ -241,7 +266,7 @@
     window.scrollTo({ top: 0 });
     ({
       today: loadToday, plan: loadPlan, recurring: loadRecurring,
-      tx: () => loadTransactions(true), analytics: loadAnalytics, settings: loadSettings,
+      tx: () => loadTransactions(true), tasks: loadTasks, analytics: loadAnalytics, settings: loadSettings,
     })[name]();
   }
 
@@ -340,6 +365,7 @@
   fillCategorySelect(quickForm.category, 'expense');
   fillPaymentSelect(quickForm.payment_method, 'cash');
   wireTypeSegment(quickForm);
+  wireSmartAmount(quickForm.amount);
 
   guardSubmit(quickForm, async (e) => {
     const f = new FormData(quickForm);
@@ -454,6 +480,51 @@
         ? recent.items.map((t) => txItem(t)).join('')
         : '<div class="empty">Henüz işlem yok. "+ Para ekle" ile başla, sonra harcamalarını gir 👆</div>';
     } catch (err) { toast(err.message, true); }
+    loadWeather(); // independent, non-blocking — a failure here must never break the Bugün tab
+  }
+
+  // ------------------------------------------------------------------------
+  // Hava durumu — Open-Meteo (no API key), cached once a day per location.
+  // Purely a "nice to glance at" widget, unrelated to money, so any failure
+  // (no geolocation permission, offline, ...) just leaves the card hidden.
+  // ------------------------------------------------------------------------
+  const WEATHER_ICON = { // WMO weather code -> emoji + Turkish label
+    0: ['☀️', 'Açık'], 1: ['🌤️', 'Az bulutlu'], 2: ['⛅', 'Parçalı bulutlu'], 3: ['☁️', 'Kapalı'],
+    45: ['🌫️', 'Sisli'], 48: ['🌫️', 'Kırağı sisi'],
+    51: ['🌦️', 'Çisenti'], 53: ['🌦️', 'Çisenti'], 55: ['🌦️', 'Yoğun çisenti'],
+    61: ['🌧️', 'Hafif yağmur'], 63: ['🌧️', 'Yağmurlu'], 65: ['🌧️', 'Kuvvetli yağmur'],
+    71: ['🌨️', 'Hafif kar'], 73: ['🌨️', 'Karlı'], 75: ['❄️', 'Kuvvetli kar'],
+    80: ['🌦️', 'Sağanak'], 81: ['🌦️', 'Sağanak'], 82: ['⛈️', 'Kuvvetli sağanak'],
+    95: ['⛈️', 'Gök gürültülü'], 96: ['⛈️', 'Dolulu fırtına'], 99: ['⛈️', 'Dolulu fırtına'],
+  };
+  async function loadWeather() {
+    try {
+      const cacheKey = 'cuzdanim_weather_cache';
+      const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
+      const hourAgo = Date.now() - 60 * 60 * 1000;
+      let coords = cached?.coords;
+      if (!coords) {
+        const pos = await new Promise((resolve, reject) => {
+          if (!navigator.geolocation) return reject(new Error('no geolocation'));
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000, maximumAge: 3600000 });
+        });
+        coords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+      }
+      let data = cached && cached.coords && cached.at > hourAgo ? cached.data : null;
+      if (!data) {
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}&current=temperature_2m,weather_code&timezone=auto`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('weather fetch failed');
+        data = await res.json();
+        localStorage.setItem(cacheKey, JSON.stringify({ coords, data, at: Date.now() }));
+      }
+      const temp = Math.round(data.current.temperature_2m);
+      const [icon, label] = WEATHER_ICON[data.current.weather_code] || ['🌡️', ''];
+      $('#weather-icon').textContent = icon;
+      $('#weather-temp').textContent = `${temp}°C`;
+      $('#weather-desc').textContent = label + (temp <= 5 ? ' · Kalın giyin 🧥' : (label.includes('yağmur') || label.includes('Sağanak')) ? ' · Şemsiyeni al ☂️' : '');
+      $('#weather-card').classList.remove('hidden');
+    } catch (_) { /* no permission / offline / blocked — leave the card hidden, non-fatal */ }
   }
 
   // ------------------------------------------------------------------------
@@ -578,6 +649,7 @@
   fillCategorySelect(ruleForm.category, 'expense');
   fillPaymentSelect(ruleForm.payment_method, 'cash');
   wireTypeSegment(ruleForm);
+  wireSmartAmount(ruleForm.amount);
   ruleForm.start_date.value = isoDate(new Date());
   ruleForm.frequency.onchange = () => {
     $('#weekday-field').hidden = ruleForm.frequency.value !== 'weekly';
@@ -718,6 +790,82 @@
     if (!id || !confirm('Bu işlem silinsin mi?')) return;
     try { await api(`/transactions/${id}`, { method: 'DELETE' }); toast('İşlem silindi.'); await loadTransactions(true); }
     catch (err) { toast(err.message, true); }
+  };
+
+  // ------------------------------------------------------------------------
+  // GÖREVLER — a general to-do/reminder list, deliberately not about money.
+  // ------------------------------------------------------------------------
+  const TASK_PRIORITY_TR = { low: 'Düşük', normal: 'Normal', high: 'Yüksek' };
+  const taskForm = $('#form-task');
+  $$('#task-priority-segment button').forEach((b) => {
+    b.onclick = () => {
+      $$('#task-priority-segment button').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      taskForm.priority.value = b.dataset.priority;
+    };
+  });
+  $('#task-remind').onchange = (e) => { taskForm.due_at.required = e.target.checked; };
+
+  guardSubmit(taskForm, async (e) => {
+    const f = new FormData(taskForm);
+    const dueLocal = f.get('due_at');
+    try {
+      await api('/tasks', {
+        method: 'POST',
+        body: {
+          title: f.get('title'),
+          priority: f.get('priority'),
+          remind: taskForm.remind.checked,
+          due_at: dueLocal || null, // <input type=datetime-local> gives local wall-clock, matches the API's expectation
+        },
+      });
+      toast('Görev eklendi ✅');
+      taskForm.reset();
+      setTypeSegmentLike($('#task-priority-segment'), 'normal', 'data-priority');
+      taskForm.priority.value = 'normal';
+      await loadTasks();
+    } catch (err) { toast(err.message, true); }
+  });
+
+  function setTypeSegmentLike(container, value, attr) {
+    $$('button', container).forEach((b) => b.classList.toggle('active', b.getAttribute(attr) === value));
+  }
+
+  $('#task-show-done').onchange = () => loadTasks();
+
+  async function loadTasks() {
+    try {
+      const includeDone = $('#task-show-done').checked;
+      const items = await api(`/tasks?include_done=${includeDone}`);
+      $('#task-list').innerHTML = items.length ? items.map((t) => `
+        <div class="item ${t.is_done ? 'inactive' : ''}">
+          <input type="checkbox" class="task-check" data-toggle-task="${t.id}" ${t.is_done ? 'checked' : ''}>
+          <div class="body">
+            <div class="title" style="${t.is_done ? 'text-decoration:line-through' : ''}">
+              ${escapeHtml(t.title)}
+              ${t.priority === 'high' && !t.is_done ? '<span class="badge err">Yüksek</span>' : ''}
+            </div>
+            <div class="sub">${t.due_at ? fmtDateTime(t.due_at) + (t.remind ? ' 🔔' : '') : TASK_PRIORITY_TR[t.priority]}${t.notes ? ' · ' + escapeHtml(t.notes) : ''}</div>
+          </div>
+          <button class="ghost" type="button" data-del-task="${t.id}" aria-label="Sil">🗑️</button>
+        </div>`).join('') : '<div class="empty">Henüz görev yok. Yukarıdan ekle 👆</div>';
+    } catch (err) { toast(err.message, true); }
+  }
+
+  $('#task-list').onclick = async (e) => {
+    const toggleId = e.target.closest('[data-toggle-task]')?.dataset.toggleTask;
+    const delId = e.target.closest('[data-del-task]')?.dataset.delTask;
+    try {
+      if (toggleId) {
+        await api(`/tasks/${toggleId}`, { method: 'PATCH', body: { is_done: e.target.checked } });
+        await loadTasks();
+      } else if (delId) {
+        if (!confirm('Bu görev silinsin mi?')) return;
+        await api(`/tasks/${delId}`, { method: 'DELETE' });
+        toast('Görev silindi.');
+        await loadTasks();
+      }
+    } catch (err) { toast(err.message, true); }
   };
 
   // ------------------------------------------------------------------------

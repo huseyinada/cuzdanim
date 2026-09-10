@@ -23,12 +23,14 @@ import os
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
 
+from app.database import async_session_maker
 from app.scheduler import (
     check_budget_alerts,
     generate_monthly_snapshots,
     post_due_recurring,
     send_daily_motivation,
 )
+from app.services import TaskService
 
 router = APIRouter(prefix="/api/cron", tags=["Cron (internal)"])
 
@@ -46,9 +48,14 @@ def _guard(authorization: str | None, key: str | None) -> None:
 
 @router.get("/tick")
 async def tick(authorization: str | None = Header(default=None), key: str | None = Query(default=None)):
-    """Every minute (external pinger): post any due recurring transactions."""
+    """Every few minutes (external pinger): post any due recurring transactions
+    and push any due Görevler (task) reminders — both idempotent, safe to share
+    one cadence."""
     _guard(authorization, key)
     await post_due_recurring()
+    async with async_session_maker() as db:
+        await TaskService(db).send_due_reminders()
+        await db.commit()
     return {"ok": True}
 
 

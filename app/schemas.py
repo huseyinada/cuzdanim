@@ -19,6 +19,7 @@ from app.models import (
     Frequency,
     PaymentMethod,
     PeriodType,
+    TaskPriority,
     TransactionSource,
     TransactionType,
 )
@@ -480,3 +481,43 @@ class PushTestResult(BaseModel):
     sent: int
     failed: int
     removed_stale: int
+
+
+# ============================================================================
+# Tasks (Görevler) — a general to-do/reminder list, deliberately unrelated to money.
+# ============================================================================
+class TaskCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    notes: Optional[str] = Field(default=None, max_length=4000)
+    priority: TaskPriority = TaskPriority.NORMAL
+    due_at: Optional[datetime] = None
+    remind: bool = False
+
+    @model_validator(mode="after")
+    def _remind_needs_due_date(self) -> "TaskCreate":
+        if self.remind and not self.due_at:
+            raise ValueError("Hatırlatma için bir tarih/saat seçmelisin.")
+        return self
+
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    notes: Optional[str] = Field(default=None, max_length=4000)
+    priority: Optional[TaskPriority] = None
+    due_at: Optional[datetime] = None
+    remind: Optional[bool] = None
+    is_done: Optional[bool] = None
+
+
+class TaskRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    notes: Optional[str] = None
+    priority: TaskPriority
+    due_at: Optional[datetime] = None
+    remind: bool
+    is_done: bool
+    done_at: Optional[datetime] = None
+    created_at: datetime

@@ -105,6 +105,12 @@ class TransactionSource(str, enum.Enum):
     RECURRING = "recurring"  # auto-posted by a RecurringRule
 
 
+class TaskPriority(str, enum.Enum):
+    LOW = "low"
+    NORMAL = "normal"
+    HIGH = "high"
+
+
 INCOME_CATEGORIES: set[Category] = {
     Category.SALARY,
     Category.FREELANCE,
@@ -154,6 +160,9 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
     recurring_rules: Mapped[list["RecurringRule"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    )
+    tasks: Mapped[list["Task"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
 
@@ -468,3 +477,39 @@ class DailyMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship(back_populates="daily_messages")
+
+
+class Task(Base):
+    """A quick to-do / reminder — deliberately unrelated to money. General
+    life-organizer that piggybacks on the app's existing push-notification
+    pipeline so a due task can nudge the user the same way a bill does."""
+
+    __tablename__ = "tasks"
+    __table_args__ = (
+        Index("ix_tasks_user_done", "user_id", "is_done"),
+        Index("ix_tasks_due", "remind", "is_done", "due_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    priority: Mapped[TaskPriority] = mapped_column(
+        SAEnum(TaskPriority, name="task_priority", values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+        default=TaskPriority.NORMAL,
+    )
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)  # local naive, like transactions
+    remind: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)  # idempotency
+    is_done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="tasks")

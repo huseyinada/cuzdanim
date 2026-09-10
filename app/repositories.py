@@ -25,6 +25,7 @@ from app.models import (
     PushSubscription,
     RecurringRule,
     SpendingPlan,
+    Task,
     Transaction,
     TransactionSource,
     TransactionType,
@@ -568,3 +569,57 @@ class DailyMessageRepository:
     async def mark_pushed(self, message: DailyMessage, when: datetime) -> None:
         message.pushed_at = when
         await self.db.flush()
+
+
+class TaskRepository:
+    """Görevler (to-do list) — general life-organizer, unrelated to money."""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def list_for_user(self, user_id: str, *, include_done: bool = True) -> Sequence[Task]:
+        query = select(Task).where(Task.user_id == user_id)
+        if not include_done:
+            query = query.where(Task.is_done.is_(False))
+        result = await self.db.execute(
+            query.order_by(Task.is_done.asc(), Task.due_at.is_(None).asc(), Task.due_at.asc(), Task.created_at.desc())
+        )
+        return result.scalars().all()
+
+    async def get_by_id(self, task_id: str, user_id: str) -> Optional[Task]:
+        result = await self.db.execute(select(Task).where(Task.id == task_id, Task.user_id == user_id))
+        return result.scalar_one_or_none()
+
+    async def create(self, *, user_id: str, data: dict) -> Task:
+        task = Task(user_id=user_id, **data)
+        self.db.add(task)
+        await self.db.flush()
+        await self.db.refresh(task)
+        return task
+
+    async def update(self, task: Task, updates: dict) -> Task:
+        for key, value in updates.items():
+            setattr(task, key, value)
+        await self.db.flush()
+        await self.db.refresh(task)
+        return task
+
+    async def delete(self, task: Task) -> None:
+        await self.db.delete(task)
+        await self.db.flush()
+
+    async def list_due_reminders(self, now: datetime, *, limit: int = 500) -> Sequence[Task]:
+        """Undone tasks with `remind=True` whose `due_at` has passed and haven't
+        been reminded yet — the set the reminder job needs to push and mark."""
+        result = await self.db.execute(
+            select(Task)
+            .where(
+                Task.remind.is_(True),
+                Task.is_done.is_(False),
+                Task.reminded_at.is_(None),
+                Task.due_at.is_not(None),
+                Task.due_at <= now,
+            )
+            .limit(limit)
+        )
+        return result.scalars().all()

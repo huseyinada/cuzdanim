@@ -78,12 +78,14 @@ FAKE_SUBSCRIPTION = {
 
 
 async def main() -> None:
+    from app.database import async_session_maker
     from app.main import app
     from app.push import get_vapid_signer, send_web_push
     from app.scheduler import (
         backup_database, check_budget_alerts, generate_monthly_snapshots,
         post_due_recurring, send_daily_motivation,
     )
+    from app.services import TaskService
     from app.timeutils import local_now_naive, local_today
 
     transport = httpx.ASGITransport(app=app)
@@ -95,7 +97,7 @@ async def main() -> None:
             version = con.execute("select version_num from alembic_version").fetchone()[0]
             cols = {r[1] for r in con.execute("pragma table_info(transactions)")}
             con.close()
-            assert version == "a7c41e9b2d30", version
+            assert version == "c3f7a1d9e2b4", version
             assert {"source", "recurring_rule_id", "scheduled_for"} <= cols, cols
             print("migration OK -> head", version, "| new transaction columns present")
 
@@ -265,6 +267,30 @@ async def main() -> None:
             r = await c.get("/api/v1/system/backups", headers=h)
             assert len(r.json()) - len(BACKUPS_BEFORE) == 2, [b["path"] for b in r.json()]
             print("backup OK:", backup_path.name, backup_path.stat().st_size, "bytes (restorable: users =", n_users, ") | 2 backups in the same second got distinct names")
+
+            # --- Tasks (Görevler) -------------------------------------------------------------------
+            past_due = (local_now_naive() - timedelta(minutes=1)).isoformat()
+            r = await c.post("/api/v1/tasks", headers=h, json={"title": "Faturayı öde", "remind": True, "due_at": past_due})
+            assert r.status_code == 201, r.text
+            task_id = r.json()["id"]
+            r = await c.post("/api/v1/tasks", headers=h, json={"title": "Sadece not, hatırlatma yok"})
+            assert r.status_code == 201, r.text
+            r = await c.get("/api/v1/tasks", headers=h)
+            assert r.status_code == 200 and len(r.json()) == 2, r.text
+            # remind=True with no due_at must be rejected
+            r = await c.post("/api/v1/tasks", headers=h, json={"title": "Geçersiz", "remind": True})
+            assert r.status_code == 422, r.text
+            async with async_session_maker() as tdb:
+                sent = await TaskService(tdb).send_due_reminders()
+                await tdb.commit()
+            assert sent >= 0  # no real subscription in this test -> 0 delivered, but must not raise
+            r = await c.patch(f"/api/v1/tasks/{task_id}", headers=h, json={"is_done": True})
+            assert r.status_code == 200 and r.json()["is_done"] is True and r.json()["done_at"], r.text
+            r = await c.get("/api/v1/tasks?include_done=false", headers=h)
+            assert task_id not in {t["id"] for t in r.json()}, "done task must be hidden when include_done=false"
+            r = await c.delete(f"/api/v1/tasks/{task_id}", headers=h)
+            assert r.status_code == 204
+            print("tasks OK (create/list/remind-validation/reminder-job/complete/delete)")
 
             # --- Analytics / health / validation ---------------------------------------------------
             r = await c.get("/api/v1/analytics/summary", headers=h)

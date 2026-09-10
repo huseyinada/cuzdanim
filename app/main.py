@@ -2,6 +2,7 @@
 Application entry point — FastAPI app factory, middleware, routers, static
 PWA frontend, and the APScheduler lifecycle wired into FastAPI's `lifespan`.
 """
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -13,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.database import dispose_engine, run_migrations
+from app.database import async_session_maker, dispose_engine, run_migrations
 from app.paths import BUNDLE_DIR
 from app.push import get_vapid_keys
 from app.routers import (
@@ -27,10 +28,12 @@ from app.routers import (
     push,
     recurring,
     system,
+    tasks,
     transactions,
     wallet,
 )
 from app.scheduler import scheduler, shutdown_scheduler, start_scheduler
+from app.services import TaskService
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -47,6 +50,28 @@ STATIC_DIR = BUNDLE_DIR / "app" / "static"
 IS_SERVERLESS = os.environ.get("VERCEL") == "1"
 
 
+async def _task_reminder_loop() -> None:
+    """Local/exe mode only: checks for due task reminders every 60s.
+
+    Deliberately its own small asyncio loop instead of a job on the
+    APScheduler instance in scheduler.py — keeps this feature fully
+    self-contained in main.py + services.py + routers/tasks.py, no shared
+    edits to the scheduler module needed. On Vercel the exact same check runs
+    via `/api/cron/task-reminders` instead (see routers/cron.py)."""
+    while True:
+        try:
+            await asyncio.sleep(60)
+            async with async_session_maker() as db:
+                sent = await TaskService(db).send_due_reminders()
+                await db.commit()
+                if sent:
+                    logger.info("task reminder loop: %s push(es) sent", sent)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("task reminder loop iteration failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: migrate schema to head (any dialect), load VAPID keys, start scheduler
@@ -59,12 +84,16 @@ async def lifespan(app: FastAPI):
 
     await run_migrations()  # Alembic upgrade head — idempotent, handles legacy DBs
     get_vapid_keys()        # create/load push keys once, up front, so the first subscribe never races
+    reminder_task = None
     if not IS_SERVERLESS:
         start_scheduler()
+        reminder_task = asyncio.create_task(_task_reminder_loop())
 
     yield
 
     logger.info("Shutting down %s", settings.APP_NAME)
+    if reminder_task:
+        reminder_task.cancel()
     if not IS_SERVERLESS:
         shutdown_scheduler()
     await dispose_engine()
@@ -129,6 +158,7 @@ def create_app() -> FastAPI:
         recurring.router,
         wallet.router,
         system.router,
+        tasks.router,
     ):
         app.include_router(router, prefix=api_prefix)
 

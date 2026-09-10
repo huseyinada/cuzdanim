@@ -88,6 +88,16 @@
           <div id="mot-quote" class="quote small"></div>
         </div>
 
+        <div class="card hidden" id="weather-card">
+          <div class="row" style="gap:14px">
+            <div id="weather-icon" style="font-size:34px;line-height:1">⛅</div>
+            <div style="flex:1">
+              <div id="weather-temp" style="font-size:20px;font-weight:700">—</div>
+              <div id="weather-desc" class="muted small">—</div>
+            </div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="row between">
             <h3>Kasa</h3>
@@ -301,6 +311,44 @@
         </div>
       </div>
 
+      <!-- GÖREVLER (paradan bağımsız, hayatı kolaylaştıran genel yapılacaklar listesi) -->
+      <div id="tab-tasks" class="tab hidden">
+        <div class="card">
+          <h3>Yeni görev</h3>
+          <form id="form-task">
+            <div class="field">
+              <input name="title" type="text" required maxlength="200" placeholder="Ne yapman gerekiyor?">
+            </div>
+            <div class="grid-2">
+              <div class="field">
+                <label>Öncelik</label>
+                <div class="segment" id="task-priority-segment">
+                  <button type="button" data-priority="low">Düşük</button>
+                  <button type="button" data-priority="normal" class="active">Normal</button>
+                  <button type="button" data-priority="high">Yüksek</button>
+                </div>
+              </div>
+              <div class="field">
+                <label>Tarih/saat <span class="muted small">(opsiyonel)</span></label>
+                <input name="due_at" type="datetime-local">
+              </div>
+            </div>
+            <label class="switch small" style="margin-bottom:12px">
+              <input type="checkbox" name="remind" id="task-remind"> Bu saatte bildirim gönder
+            </label>
+            <input type="hidden" name="priority" value="normal">
+            <button class="primary block" type="submit">Görev Ekle</button>
+          </form>
+        </div>
+        <div class="card">
+          <div class="row between" style="margin-bottom:10px">
+            <h3 style="margin:0">Listem</h3>
+            <label class="switch small"><input type="checkbox" id="task-show-done" checked> Tamamlananları göster</label>
+          </div>
+          <div id="task-list" class="list"></div>
+        </div>
+      </div>
+
       <!-- ANALİZ -->
       <div id="tab-analytics" class="tab hidden">
         <div class="card">
@@ -392,6 +440,7 @@
       <button type="button" data-tab="plan"><span class="ico">📅</span>Plan</button>
       <button type="button" data-tab="recurring"><span class="ico">🔁</span>Sabit</button>
       <button type="button" data-tab="tx"><span class="ico">🧾</span>İşlemler</button>
+      <button type="button" data-tab="tasks"><span class="ico">✅</span>Görevler</button>
       <button type="button" data-tab="analytics"><span class="ico">📊</span>Analiz</button>
     </nav>
   </section>
